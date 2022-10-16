@@ -19,13 +19,17 @@ module.exports = {
         "@typescript-eslint"
     ],
     "rules": {
+        "curly": ["error", "all"],
         "semi": ["error", "always"],
         "quotes": ["error", "double"],
-        "no-extra-parens ": ["warn", "always"],
-        "no-unused-vars": ["error", { "vars": "all", "args": "after-used", "ignoreRestSiblings": false }],
+        "guard-for-in": ["error", "all"],
+        "no-else-return": ["error", "all"],
+        "no-extra-parens ": ["error", "always"],
+        "multiline-comment-style": ["error", "starred-block"],
         "prefer-const": ["error", {
             "destructuring": "any",
             "ignoreReadBeforeAssign": false
-        }]
+        }],
+        "no-unused-vars": ["error", { "vars": "all", "args": "after-used", "ignoreRestSiblings": false }],
     }
 };

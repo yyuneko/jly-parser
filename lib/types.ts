@@ -1,4 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { _Set, getKeys } from "./util";
+import { symbolStack } from "./parser";
 const EPSILON = Symbol("epsilon");
 const END = Symbol("end");
 
@@ -21,11 +23,11 @@ class NonTerminal {
   first: (symbol | string)[];
   follows: (symbol | string)[];
   constructor(symbol: symbol | string) {
-    this.symbol = symbol;
-    this.productions = [];
     this.first = [];
     this.follows = [];
+    this.symbol = symbol;
     this.nullable = false;
+    this.productions = [];
   }
 
   toString() {
@@ -44,12 +46,12 @@ class Production {
   nullable: boolean;
   precedence: number;
   symbol: symbol | string;
-  func?: (symbols: any) => void;
+  func?: (symbols: symbolStack) => void;
   constructor(
     id: number,
     symbol: symbol | string,
     handle: string | string[],
-    func?: (symbols: any) => void,
+    func?: (symbols: symbolStack) => void,
     precedence?: number,
   ) {
     this.id = id;
@@ -84,14 +86,10 @@ class Production {
 class Item {
   id: number;
   dotPosition: number;
-  //   predecessor: number;
   production: Production;
-  //   follows: (symbol | string)[];
-  constructor(production: Production, dotPosition: number /*, follows: (symbol | string)[], predecessor: number*/) {
-    // this.follows = follows;
+  constructor(production: Production, dotPosition: number) {
     this.production = production;
     this.dotPosition = dotPosition;
-    // this.predecessor = predecessor;
     this.id = parseInt(production.id + "a" + this.dotPosition, 36);
   }
 
@@ -100,7 +98,7 @@ class Item {
   }
 
   lookAhead() {
-    return new Item(this.production, this.dotPosition + 1 /*, this.follows, this.predecessor*/);
+    return new Item(this.production, this.dotPosition + 1);
   }
 
   toString() {
@@ -121,7 +119,7 @@ class ItemSet extends _Set {
   }
 
   add(...items: Item[]) {
-    for (let item of items) {
+    for (const item of items) {
       this.hash[item.id] = true;
     }
     super._add(...items);
@@ -139,7 +137,7 @@ class ItemSet extends _Set {
   }
 
   copy() {
-    let ret = new ItemSet();
+    const ret = new ItemSet();
     ret.add(...(this.items as Item[]));
     ret.hash = Object.create(this.hash);
     return ret;
@@ -151,13 +149,13 @@ class ItemSet extends _Set {
 }
 
 class LRTable {
-  actions: { [symbol: symbol | string]: { accept?: true; shift?: number; reduce?: number; goto?: number } }[];
-  stateNumbersMap: { [state: string]: number };
   states: ItemSet[];
+  stateNumbersMap: { [state: string]: number };
+  actions: { [symbol: symbol | string]: { accept?: true; shift?: number; reduce?: number; goto?: number } }[];
   constructor() {
+    this.states = [];
     this.actions = [];
     this.stateNumbersMap = {};
-    this.states = [];
   }
 
   accept(state: number) {
@@ -165,8 +163,12 @@ class LRTable {
   }
 
   shift(fromState: number, toState: number, terminal: symbol | string) {
-    if (typeof fromState === "string") fromState = this.stateNumbersMap[fromState];
-    if (typeof toState === "string") toState = this.stateNumbersMap[toState];
+    if (typeof fromState === "string") {
+      fromState = this.stateNumbersMap[fromState];
+    }
+    if (typeof toState === "string") {
+      toState = this.stateNumbersMap[toState];
+    }
     if (this.actions[fromState][terminal]) {
       this.actions[fromState][terminal].shift = toState;
     } else {
@@ -175,7 +177,9 @@ class LRTable {
   }
 
   reduce(fromState: number, terminal: symbol | string, productionId: number) {
-    if (typeof fromState === "string") fromState = this.stateNumbersMap[fromState];
+    if (typeof fromState === "string") {
+      fromState = this.stateNumbersMap[fromState];
+    }
     if (this.actions[fromState][terminal]) {
       this.actions[fromState][terminal].reduce = productionId;
     } else {
@@ -184,8 +188,12 @@ class LRTable {
   }
 
   goto(fromState: number, toState: number, nonterminal: symbol | string) {
-    if (typeof fromState === "string") fromState = this.stateNumbersMap[fromState];
-    if (typeof toState === "string") toState = this.stateNumbersMap[toState];
+    if (typeof fromState === "string") {
+      fromState = this.stateNumbersMap[fromState];
+    }
+    if (typeof toState === "string") {
+      toState = this.stateNumbersMap[toState];
+    }
     this.actions[fromState][nonterminal] = { goto: toState };
   }
 
@@ -195,11 +203,15 @@ class LRTable {
 
   addItemSet(itemSet: ItemSet) {
     const id = itemSet.valueOf();
-    if (!id) return false;
-    if (this.stateNumbersMap[id]) return this.stateNumbersMap[id];
+    if (!id) {
+      return false;
+    }
+    if (this.stateNumbersMap[id]) {
+      return this.stateNumbersMap[id];
+    }
     this.stateNumbersMap[id] = this.size;
-    this.states[this.stateNumbersMap[id]] = itemSet;
     this.actions[this.stateNumbersMap[id]] = {};
+    this.states[this.stateNumbersMap[id]] = itemSet;
     return this.stateNumbersMap[id];
   }
 

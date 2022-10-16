@@ -1,19 +1,21 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import Lexer from "jly-lexer";
 import { Token, EPSILON, END, NonTerminal, Production, Item, ItemSet, LRTable } from "./types";
 import { getKeys } from "./util";
 type operators = { 0: "left" | "right"; [index: number]: string; [prop: string]: any }[];
+export type symbolStack = { lexer: Lexer; parser: Parser; length: number; [index: number]: any };
 type bnfItem = {
   handle: string | string[];
-  func?: (symbols: { lexer: typeof Lexer; parser: Parser; length: number; [index: number]: any }) => void;
+  func?: (symbols: symbolStack) => void;
 };
 type bnf = {
   [nonterminal: string | symbol]: bnfItem | bnfItem[];
 };
 interface grammar {
-  startSymbol: string;
-  tokens: string | string[];
-  operators?: operators;
   bnf: bnf;
+  startSymbol: string;
+  operators?: operators;
+  tokens: string | string[];
 }
 interface options {
   type: string;
@@ -21,33 +23,32 @@ interface options {
 }
 class Parser {
   options: options;
+  lrtable?: LRTable;
+  symbolStack?: any[];
+  terminals: string[];
   lexer?: typeof Lexer;
   startSymbol?: string;
-  artificialStartSymbol?: NonTerminal;
-  productions: Production[];
-  operators: {
-    [operator: string]: { precedence: number; associativity: "left" | "right" };
-  };
-  nonterminals: { [nontermial: symbol | string]: NonTerminal };
-  symbols: (symbol | string)[];
-  terminals: string[];
-  lrtable?: LRTable;
   stateStack?: number[];
-  symbolStack?: any[];
   log?: {
     stateStack: string;
     symbolStack: string;
     action: string;
   }[];
+  productions: Production[];
+  symbols: (symbol | string)[];
+  artificialStartSymbol?: NonTerminal;
+  nonterminals: { [nontermial: symbol | string]: NonTerminal };
+  operators: {
+    [operator: string]: { precedence: number; associativity: "left" | "right" };
+  };
+
   constructor(grammar: grammar, options: options) {
-    this.options = options;
-    this.lexer = undefined;
-    this.startSymbol = undefined;
-    this.productions = [];
-    this.operators = {};
-    this.nonterminals = {};
     this.symbols = [];
     this.terminals = [];
+    this.operators = {};
+    this.productions = [];
+    this.nonterminals = {};
+    this.options = options;
     this.processGrammar(grammar);
     this.buildLRTable();
   }
@@ -71,16 +72,19 @@ class Parser {
           break;
         }
         first[symbol].forEach((item) => {
-          if (item !== EPSILON) ret.add(item);
+          if (item !== EPSILON) {
+            ret.add(item);
+          }
         });
-        if (!this.nonterminals[symbol].nullable) break;
-        else if (i === prod.handle.length - 1) {
+        if (!this.nonterminals[symbol].nullable) {
+          break;
+        } else if (i === prod.handle.length - 1) {
           ret.add(EPSILON);
         }
       }
       return ret;
     };
-    for (let symbol of getKeys(this.nonterminals)) {
+    for (const symbol of getKeys(this.nonterminals)) {
       first[symbol] = new Set();
     }
     while (true) {
@@ -88,7 +92,7 @@ class Parser {
         .map((item) => first[item].size)
         .sort()
         .toString();
-      for (let prod of this.productions) {
+      for (const prod of this.productions) {
         getFirst(prod).forEach((item) => {
           first[prod.symbol].add(item);
         });
@@ -126,7 +130,9 @@ class Parser {
             follow[prod.handle[i]].add(prod.handle[i + 1]);
           } else {
             this.firsts()[prod.handle[i + 1]].forEach((item) => {
-              if (item !== EPSILON) follow[prod.handle[i]].add(item);
+              if (item !== EPSILON) {
+                follow[prod.handle[i]].add(item);
+              }
             });
             if (this.nonterminals[prod.handle[i + 1]].nullable) {
               follow[prod.handle[i + 1]].forEach((item) => {
@@ -137,12 +143,12 @@ class Parser {
         }
       }
     };
-    for (let symbol of getKeys(this.nonterminals)) {
+    for (const symbol of getKeys(this.nonterminals)) {
       follow[symbol] = new Set();
     }
     this.artificialStartSymbol && follow[this.artificialStartSymbol.symbol].add(END);
     while (true) {
-      let oldSize = getKeys(follow)
+      const oldSize = getKeys(follow)
         .map((item) => follow[item].size)
         .sort()
         .toString();
@@ -198,14 +204,15 @@ class Parser {
   buildLRTable4SLR() {
     this.lrtable = new LRTable();
     // get set of firsts
-    const first = this.firsts();
+    this.firsts();
     // get set of follows
     const follow = this.follows();
+
     const getClosure = (initItemSet: ItemSet) => {
-      let closure = initItemSet.copy();
+      const closure = initItemSet.copy();
       for (let i = 0; i < closure.size; i++) {
         const item = closure.items[i];
-        if (this.nonterminals.hasOwnProperty(item.production.handle[item.dotPosition])) {
+        if (this.nonterminals[item.production.handle[item.dotPosition]]) {
           closure.add(
             ...this.nonterminals[item.production.handle[item.dotPosition]].productions.map((prod) => {
               return new Item(prod, 0);
@@ -215,16 +222,18 @@ class Parser {
       }
       return closure;
     };
+
     const goto = (itemSet: ItemSet, symbol: string | symbol) => {
-      let closure = new ItemSet();
+      const closure = new ItemSet();
       for (let i = 0; i < itemSet.size; ++i) {
-        let item = itemSet.items[i];
+        const item = itemSet.items[i];
         if (item.production.handle[item.dotPosition] === symbol) {
           closure.add(item.lookAhead());
         }
       }
       return getClosure(closure);
     };
+
     // get sets of closure
     let itemSet = new ItemSet();
     this.artificialStartSymbol && itemSet.add(new Item(this.artificialStartSymbol.productions[0], 0));
@@ -232,18 +241,18 @@ class Parser {
     for (let i = 0; i < this.lrtable.size; ++i) {
       itemSet = this.lrtable.states[i];
       for (let j = 0; j < itemSet.size; ++j) {
-        let item = itemSet.items[j];
+        const item = itemSet.items[j];
         if (item.dotPosition === item.production.handle.length) {
           follow[item.production.symbol].forEach((symbol) => {
             this.lrtable?.reduce(i, symbol, item.production.id);
           });
         }
       }
-      for (let symbol of this.symbols) {
+      for (const symbol of this.symbols) {
         /**
          * if `goto(itemSet, symbol)` is empty or exists in lrtable, then ignore, otherwise add to lrtable
          */
-        let nextItemSet = this.lrtable.addItemSet(goto(itemSet, symbol));
+        const nextItemSet = this.lrtable.addItemSet(goto(itemSet, symbol));
         if (nextItemSet !== false) {
           if (this.lrtable.states[nextItemSet].has(this.lrtable.states[0].items[0].lookAhead())) {
             this.lrtable.accept(nextItemSet);
@@ -279,9 +288,15 @@ class Parser {
   buildLRTableLALR() {}
 
   parse(input: string) {
-    if (input === null || typeof input === "undefined") throw TypeError("input must be not null or undefined");
-    if (typeof input !== "string") throw TypeError("input must be a string");
-    if (!(this.lexer instanceof Lexer)) throw TypeError("lexer of this parser is undefined or not instance of Lexer");
+    if (input === null || typeof input === "undefined") {
+      throw TypeError("input must be not null or undefined");
+    }
+    if (typeof input !== "string") {
+      throw TypeError("input must be a string");
+    }
+    if (!(this.lexer instanceof Lexer)) {
+      throw TypeError("lexer of this parser is undefined or not instance of Lexer");
+    }
     this.lexer.input(input);
     const getToken = this.lexer.lex.bind(this.lexer);
     this.stateStack = [0];
@@ -295,7 +310,7 @@ class Parser {
         if (type === "EOF") {
           type = END;
         }
-        terminal = new Token(type, this.lexer.yytext, this.lexer.lineno, this.lexer.lex_pos);
+        terminal = new Token(type, this.lexer.yytext, this.lexer.lineno, this.lexer.lex_pos - this.lexer.yytext.length);
       }
       ({ shift, reduce } = this.lrtable?.actions[this.stateStack[this.stateStack.length - 1]][terminal?.type] ?? {});
       if (shift !== undefined && reduce !== undefined) {
@@ -316,8 +331,8 @@ class Parser {
         } else if (reduce !== undefined) {
           const len = this.productions[reduce].handle.length;
           this.stateStack.splice(this.stateStack.length - len, len);
-          let slice = this.symbolStack.splice(this.symbolStack.length - len, len);
-          let p = this.productionProxy(slice);
+          const slice = this.symbolStack.splice(this.symbolStack.length - len, len);
+          const p = this.productionProxy(slice);
           if (typeof this.productions[reduce].func === "function") {
             this.productions[reduce].func?.(p);
             const symbolAfterReduce = p[0];
@@ -348,7 +363,7 @@ class Parser {
   }
 
   productionProxy(inputs: any[]): any {
-    let proxy = {
+    const proxy = {
       lexer: this.lexer,
       parser: this,
       symbolsOfProduction: [null, ...inputs],
@@ -381,15 +396,16 @@ class Parser {
           target.symbolsOfProduction[Number(key)] = value;
           return true;
         } else {
-          throw RangeError(`Number is the only valid property name`);
+          throw RangeError("Number is the only valid property name");
         }
       },
     });
   }
 
   processGrammar(grammar: grammar) {
-    if (!grammar.tokens) this.terminals = [];
-    else if (typeof grammar.tokens === "string") {
+    if (!grammar.tokens) {
+      this.terminals = [];
+    } else if (typeof grammar.tokens === "string") {
       this.terminals = grammar.tokens.split(/\s+/).filter((token) => token);
     } else if (Array.isArray(grammar.tokens)) {
       this.terminals = grammar.tokens;
@@ -410,7 +426,9 @@ class Parser {
   }
 
   processOperators(operators?: operators) {
-    if (!operators) operators = [];
+    if (!operators) {
+      operators = [];
+    }
     if (!Array.isArray(operators)) {
       throw TypeError(`${operators} should be array`);
     }
@@ -426,25 +444,28 @@ class Parser {
 
   processProductions(bnf: bnf) {
     this.symbols.push(...getKeys(bnf));
+
     const check = () => {
       this.productions[this.productions.length - 1].handle.forEach((sym) => {
         if (!this.symbols.includes(sym)) {
           throw RangeError(`'${sym}' is undefined in terminals`);
         }
-        if (this.operators[sym])
+        if (this.operators[sym]) {
           this.productions[this.productions.length - 1].precedence = Math.max(
             this.productions[this.productions.length - 1].precedence,
             this.operators[sym].precedence,
           );
+        }
       });
     };
+
     const getCustomPrecedence = (handle: string): [string, number] => {
-      let handleWithoutPrec = handle.split("%prec");
+      const handleWithoutPrec = handle.split("%prec");
       if (handleWithoutPrec.length > 2) {
         throw SyntaxError(`'${handle}' is invalid`);
       }
       if (handleWithoutPrec.length === 2) {
-        let precedenceLevel = handleWithoutPrec[1].trim();
+        const precedenceLevel = handleWithoutPrec[1].trim();
         if (precedenceLevel) {
           if (this.operators[precedenceLevel]) {
             return [handleWithoutPrec[0], this.operators[precedenceLevel].precedence];
@@ -460,7 +481,8 @@ class Parser {
       // never
       return ["", 0];
     };
-    for (let symbol of getKeys(bnf)) {
+
+    for (const symbol of getKeys(bnf)) {
       if (this.terminals.includes(symbol as string)) {
         throw Error(`'${symbol.toString()}' can't be defined as a nonterminal as it is a terminal`);
       }
@@ -469,12 +491,12 @@ class Parser {
       if (!Array.isArray(bnf[symbol])) {
         bnf[symbol] = [bnf[symbol] as bnfItem];
       }
-      for (let prod of bnf[symbol] as bnfItem[]) {
+      for (const prod of bnf[symbol] as bnfItem[]) {
         if (!Array.isArray(prod.handle)) {
           prod.handle = [prod.handle as string];
         }
         prod.handle.forEach((item) => {
-          let [handleWithoutPrec, prec] = getCustomPrecedence(item);
+          const [handleWithoutPrec, prec] = getCustomPrecedence(item);
           this.productions.push(
             new Production(this.productions.length + 1, symbol, handleWithoutPrec, prod.func, prec),
           );
