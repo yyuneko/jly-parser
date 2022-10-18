@@ -236,15 +236,15 @@ describe("# test custom language", () => {
         `Rules:\n\t${parser.productions.map((prod, index) => {
             return index + ": " + prod.toString();
         }).join("\n\t")}
-First:\n\t${Reflect.ownKeys(parser.firsts()).map(key => {
+    First:\n\t${Reflect.ownKeys(parser.firsts()).map(key => {
             return key.toString() + ": " + parser.firsts()[key].map(item => item.toString()).join(", ");
         }).join("\n\t")}
 
-Follow:\n\t${Reflect.ownKeys(parser.follows()).map(key => {
+    Follow:\n\t${Reflect.ownKeys(parser.follows()).map(key => {
             return key.toString() + ": " + parser.follows()[key].map(item => item.toString()).join(", ");
         }).join("\n\t")}
 
-States:\n${parser.lrtable.toString()}`);
+    States:\n${parser.lrtable.toString()}`);
     const lexData = {
         tokens: grammar.tokens,
         rules: [
@@ -530,3 +530,39 @@ States:\n${parser.lrtable.toString()}`);
         // console.table(parser.lrtable.actions);
     });
 });
+
+describe("# test member expression", () => {
+    const lexerRules = {
+        tokens: ["identifier", "dot", "lParen", "rParen"],
+        rules: [{
+            name: "lParen", r: /\(/
+        }, {
+            name: "rParen", r: /\)/
+        }, {
+            name: "dot", r: /\./
+        }, { name: "identifier", r: /[_a-zA-Z][_a-zA-Z0-9]+/ }]
+    };
+    const parserGrammar = {
+        tokens: ["identifier", "dot", "lParen", "rParen"],
+        startSymbol: "MemberExpression",
+        bnf: {
+            MemberExpression: [{
+                handle: "MemberExpression dot identifier", func: function (symbols) {
+                    symbols[0] = { left: symbols[1], right: symbols[3] };
+                }
+            }, {
+                handle: "lParen MemberExpression rParen dot identifier", func: function (symbols) {
+                    symbols[0] = { left: symbols[2], right: symbols[5] };
+                }
+            }, {
+                handle: "identifier", func: function (symbols) {
+                    symbols[0] = symbols[1];
+                }
+            }]
+        }
+    };
+    const parser = new Parser(parserGrammar, { type: 'slr', debug: true });
+    parser.lexer = new Lexer(lexerRules);
+    const ast = parser.parse("((foo.bar).baz).qux");
+    console.log(JSON.stringify(ast, "", null));
+})
