@@ -11,24 +11,25 @@ type bnfItem = {
 type bnf = {
   [nonterminal: string | symbol]: bnfItem | bnfItem[];
 };
-interface grammar {
+interface Grammar {
   bnf: bnf;
   startSymbol: string;
   operators?: operators;
   tokens: string | string[];
 }
-interface options {
+interface Options {
   type: string;
   debug: boolean;
 }
 class Parser {
-  options: options;
+  options: Options;
   lrtable?: LRTable;
   symbolStack?: any[];
   terminals: string[];
   lexer?: typeof Lexer;
   startSymbol?: string;
   stateStack?: number[];
+  executionStack?: any[];
   log?: {
     stateStack: string;
     symbolStack: string;
@@ -42,7 +43,7 @@ class Parser {
     [operator: string]: { precedence: number; associativity: "left" | "right" };
   };
 
-  constructor(grammar: grammar, options: options) {
+  constructor(grammar: Grammar, options: Options) {
     this.symbols = [];
     this.terminals = [];
     this.operators = {};
@@ -65,12 +66,17 @@ class Parser {
     const first: { [symbol: symbol | string]: Set<symbol | string> } = {};
     const getFirst = (prod: Production) => {
       const ret: Set<symbol | string> = new Set();
+      if (prod.handle.length === 0) {
+        this.nonterminals[prod.symbol].nullable = true;
+        ret.add(EPSILON);
+      }
       for (let i = 0; i < prod.handle.length; ++i) {
         const symbol = prod.handle[i];
         if (this.terminals.includes(symbol)) {
           ret.add(symbol);
           break;
         }
+
         first[symbol].forEach((item) => {
           if (item !== EPSILON) {
             ret.add(item);
@@ -236,7 +242,9 @@ class Parser {
 
     // get sets of closure
     let itemSet = new ItemSet();
-    this.artificialStartSymbol && itemSet.add(new Item(this.artificialStartSymbol.productions[0], 0));
+    if (this.artificialStartSymbol) {
+      itemSet.add(new Item(this.artificialStartSymbol.productions[0], 0));
+    }
     this.lrtable.addItemSet(getClosure(itemSet));
     for (let i = 0; i < this.lrtable.size; ++i) {
       itemSet = this.lrtable.states[i];
@@ -301,28 +309,45 @@ class Parser {
     const getToken = this.lexer.lex.bind(this.lexer);
     this.stateStack = [0];
     this.symbolStack = [];
+    this.executionStack = [];
     this.log = [];
-    let terminal, reduce, shift;
+    let done = false;
+    let terminal;
+    let reduce;
+    let shift;
+    let accept;
     while (true) {
-      // if previous action is `reduce`, then use previous `terminal`, because action `reduce` doesn't consume `terminal`
-      if (reduce === undefined) {
-        let type: string | symbol = getToken();
-        if (type === "EOF") {
-          type = END;
-        }
+      let type;
+      if (done) {
+        type = END;
+        terminal = new Token(type, this.lexer.yytext, this.lexer.lineno, this.lexer.lex_pos - this.lexer.yytext.length);
+      } else if (reduce === undefined) {
+        // if previous action is `reduce`, then use previous `terminal`, because action `reduce` doesn't consume `terminal`
+        type = getToken();
         terminal = new Token(type, this.lexer.yytext, this.lexer.lineno, this.lexer.lex_pos - this.lexer.yytext.length);
       }
-      ({ shift, reduce } = this.lrtable?.actions[this.stateStack[this.stateStack.length - 1]][terminal?.type] ?? {});
+      ({ shift, reduce, accept } =
+        this.lrtable?.actions[this.stateStack[this.stateStack.length - 1]][terminal?.type] ?? {});
+      if (accept) {
+        return this.executionStack[0];
+      }
       if (shift !== undefined && reduce !== undefined) {
         throw Error(`reduce: ${reduce} / shift: ${shift} conflict`);
       } else {
         if (shift !== undefined) {
+          if (terminal?.type === "EOF") {
+            done = true;
+          }
           this.stateStack.push(shift);
-          terminal && this.symbolStack.push(terminal);
+          if (terminal) {
+            this.executionStack.push(terminal);
+            this.symbolStack.push(terminal);
+          }
           this.log.push({
             stateStack: this.stateStack.join(" "),
             symbolStack: this.symbolStack
               .map((symbol) => {
+                if (typeof symbol.type === "symbol") return symbol.type.toString();
                 return symbol.type || symbol.toString();
               })
               .join(" "),
@@ -331,14 +356,17 @@ class Parser {
         } else if (reduce !== undefined) {
           const len = this.productions[reduce].handle.length;
           this.stateStack.splice(this.stateStack.length - len, len);
-          const slice = this.symbolStack.splice(this.symbolStack.length - len, len);
+          this.symbolStack.splice(this.symbolStack.length - len, len);
+          const slice = this.executionStack.splice(this.executionStack.length - len, len);
           const p = this.productionProxy(slice);
           if (typeof this.productions[reduce].func === "function") {
             this.productions[reduce].func?.(p);
-            const symbolAfterReduce = p[0];
-            this.symbolStack.push(symbolAfterReduce);
+            const executionResult = p[0];
+            this.executionStack.push(executionResult);
+            this.symbolStack.push(this.productions[reduce].symbol);
           } else {
             p[0] = { type: this.productions[reduce].symbol, children: slice };
+            this.executionStack.push(p[0]);
             this.symbolStack.push(p[0]);
           }
           this.stateStack.push(
@@ -349,15 +377,13 @@ class Parser {
             stateStack: this.stateStack.join(" "),
             symbolStack: this.symbolStack
               .map((symbol) => {
+                if (typeof symbol.type === "symbol") return symbol.type.toString();
                 return symbol.type || symbol.toString();
               })
               .join(" "),
             action: `reduce ${this.productions[reduce].toString()}`,
           });
         }
-      }
-      if (terminal?.type === END && this.symbolStack.length === 1) {
-        return this.symbolStack[0];
       }
     }
   }
@@ -402,7 +428,7 @@ class Parser {
     });
   }
 
-  processGrammar(grammar: grammar) {
+  processGrammar(grammar: Grammar) {
     if (!grammar.tokens) {
       this.terminals = [];
     } else if (typeof grammar.tokens === "string") {
@@ -410,9 +436,9 @@ class Parser {
     } else if (Array.isArray(grammar.tokens)) {
       this.terminals = grammar.tokens;
     } else {
-      throw TypeError("tokens of grammar must be a string or array");
+      throw TypeError("tokens of Grammar must be a string or array");
     }
-    this.symbols.push(...this.terminals);
+    this.symbols.push(...this.terminals, END);
     this.processOperators(grammar.operators);
     this.processProductions(grammar.bnf);
     if (!grammar.startSymbol) {
@@ -459,7 +485,10 @@ class Parser {
       });
     };
 
-    const getCustomPrecedence = (handle: string): [string, number] => {
+    const getCustomPrecedence = (handle: string | symbol): [string | symbol, number] => {
+      if (typeof handle === "symbol") {
+        return [handle, 0];
+      }
       const handleWithoutPrec = handle.split("%prec");
       if (handleWithoutPrec.length > 2) {
         throw SyntaxError(`'${handle}' is invalid`);
@@ -507,4 +536,4 @@ class Parser {
     }
   }
 }
-export { Production, Parser };
+export { Production, Parser, END };
